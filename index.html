@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Münzen-Generator (nur für den Besitzer)</title>
+<style>
+ body{font-family:system-ui,sans-serif;max-width:560px;margin:30px auto;padding:0 16px;color:#111}
+ h1{font-size:22px} label{display:block;margin:14px 0 4px;font-weight:600}
+ input{width:100%;box-sizing:border-box;padding:10px;border:2px solid #111;border-radius:10px;font:inherit}
+ button{margin-top:16px;padding:12px 18px;border:2px solid #111;border-radius:12px;background:#f5b301;font:inherit;font-weight:700;cursor:pointer}
+ textarea{width:100%;box-sizing:border-box;height:130px;margin-top:14px;padding:10px;border:2px solid #111;border-radius:10px;font:12px monospace}
+ .warn{background:#fff3cd;border:2px solid #f5b301;border-radius:10px;padding:10px;font-size:14px}
+</style></head><body>
+<h1>Münzen-Generator</h1>
+<div class="warn">Nur für dich! Diese Datei enthält deinen geheimen Schlüssel. Gib sie niemals weiter und lade sie nirgends hoch.</div>
+<label>Code-Wort (z. B. FRUEHLING25) – das Wort ist dann der Code. Leer lassen = langer Code</label><input id="name" autocapitalize="characters" spellcheck="false" maxlength="20">
+<label>ID des Spielers (z. B. SM-ABCD-2345). Leer lassen = für alle Spieler</label><input id="id" autocapitalize="characters" spellcheck="false">
+<label>Was soll der Spieler bekommen?</label><select id="type" style="width:100%;padding:10px;border:2px solid #111;border-radius:10px;font:inherit"><option value="coins">Münzen</option><option value="points">Punkte</option><option value="rebirths">Wiedergeburten</option></select>
+<label>Anzahl der Belohnung</label><input id="amt" type="number" min="1" value="10">
+<label>Wie oft kann der Code eingelöst werden? (pro Spieler-Konto)</label><input id="uses" type="number" min="1" max="1000" value="1">
+<div class="warn" id="gamebox" style="margin-top:14px">Für Wort-Codes: Wähle zuerst deine aktuelle <b>index.html</b> aus. Danach lädst du die aktualisierte Datei herunter und gibst <b>diese</b> an deine Spieler.<br><input type="file" id="game" accept=".html" style="margin-top:8px"></div>
+<button id="go">Code erstellen</button>
+<textarea id="out" readonly placeholder="Hier erscheint der Code. Schick ihn dem Spieler, er löst ihn in den Einstellungen ein. Ohne ID gilt er für alle Spieler."></textarea>
+<button id="copy">Code kopieren</button>
+<script>
+const PRIV = {"kty":"EC","x":"AprJDd_FI3p4O1pXJfAir0sWaIzLfW0RKYBdtcliM38","y":"ODCs60_M0tzQm72zq_R33KsHxwSyOz1laxKNaTgLlhk","crv":"P-256","d":"RNMxCkc1LOfdZV0Xa0ci46-q89_5cOmmaqng7OYUkMQ"};
+const b64u = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+const sha256hex = async s => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)))].map(b => b.toString(16).padStart(2, '0')).join('');
+document.getElementById('go').onclick = async () => {
+  const $ = x => document.getElementById(x).value;
+  const id = $('id').trim().toUpperCase() || '*', n = parseInt($('amt'), 10), uses = parseInt($('uses'), 10);
+  const name = $('name').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+  if ((id !== '*' && !/^SM-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(id)) || !(n > 0) || !(uses > 0)) { alert('Bitte gültige Werte eingeben (ID leer lassen oder im Format SM-XXXX-XXXX).'); return; }
+  if (name) {                                   // Wort-Code: in die Spieldatei eintragen
+    const f = document.getElementById('game').files[0];
+    if (!f) { alert('Bitte zuerst deine index.html auswählen (Feld oben), damit das Wort eingetragen werden kann.'); return; }
+    let txt = await f.text();
+    const m = txt.match(/\/\*CODES_START\*\/const CODES = (\{.*?\});\/\*CODES_END\*\//s);
+    if (!m) { alert('Diese Datei enthält keine Code-Liste. Nimm die neueste index.html.'); return; }
+    const codes = JSON.parse(m[1]);
+    codes[await sha256hex('sm|' + name)] = { t:$('type'), a:n, u:uses, i:id === '*' ? '' : id };
+    txt = txt.replace(m[0], () => '/*CODES_START*/const CODES = ' + JSON.stringify(codes) + ';/*CODES_END*/');
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([txt], { type:'text/html' })); a.download = 'index.html'; a.click();
+    document.getElementById('out').value = name + '   (Der Code ist jetzt nur dieses Wort. Gib die heruntergeladene index.html an deine Spieler. Einträge insgesamt: ' + Object.keys(codes).length + ')';
+    return;
+  }
+  const nonce = b64u(crypto.getRandomValues(new Uint8Array(6)));
+  const payload = new TextEncoder().encode([id, $('type'), n, nonce, uses].join('|'));
+  const key = await crypto.subtle.importKey('jwk', PRIV, { name:'ECDSA', namedCurve:'P-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign({ name:'ECDSA', hash:'SHA-256' }, key, payload);
+  document.getElementById('out').value = b64u(payload) + '.' + b64u(sig);
+};
+document.getElementById('copy').onclick = () => { const o = document.getElementById('out'); o.select(); try { navigator.clipboard.writeText(o.value); } catch(e) { document.execCommand('copy'); } };
+</script></body></html>
